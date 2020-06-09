@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-package com.example.android.camera2raw;
+package com.nps.camera;
 
-import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -40,13 +39,10 @@ import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
-import android.hardware.camera2.DngCreator;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
-import android.media.MediaScannerConnection;
-import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
@@ -56,7 +52,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
 import android.support.v13.app.FragmentCompat;
-import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.util.Size;
 import android.util.SparseIntArray;
@@ -68,11 +63,11 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
 
+import com.nps.camera.imagesaver.ImageSaver;
+import com.nps.camera.permissions.CameraPermissions;
+import com.nps.camera.utils.RefCountedAutoCloseable;
+
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -118,7 +113,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </li>
  * </ul>
  */
-public class Camera2RawFragment extends Fragment
+public class Camera extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
 
     /**
@@ -132,20 +127,6 @@ public class Camera2RawFragment extends Fragment
         ORIENTATIONS.append(Surface.ROTATION_180, 180);
         ORIENTATIONS.append(Surface.ROTATION_270, 270);
     }
-
-    /**
-     * Request code for camera permissions.
-     */
-    private static final int REQUEST_CAMERA_PERMISSIONS = 1;
-
-    /**
-     * Permissions required to take a picture.
-     */
-    private static final String[] CAMERA_PERMISSIONS = {
-            Manifest.permission.CAMERA,
-            Manifest.permission.READ_EXTERNAL_STORAGE,
-            Manifest.permission.WRITE_EXTERNAL_STORAGE,
-    };
 
     /**
      * Timeout for the pre-capture sequence.
@@ -170,7 +151,7 @@ public class Camera2RawFragment extends Fragment
     /**
      * Tag for the {@link Log}.
      */
-    private static final String TAG = "Camera2RawFragment";
+    private static final String TAG = "NPS_CAMERA";
 
     /**
      * Camera state: Device is closed.
@@ -345,6 +326,8 @@ public class Camera2RawFragment extends Fragment
      * taking too long.
      */
     private long mCaptureTimer;
+
+    private CameraPermissions permissions;
 
     //**********************************************************************************************
 
@@ -596,8 +579,8 @@ public class Camera2RawFragment extends Fragment
         }
     };
 
-    public static Camera2RawFragment newInstance() {
-        return new Camera2RawFragment();
+    public static Camera newInstance() {
+        return new Camera();
     }
 
     @Override
@@ -611,6 +594,7 @@ public class Camera2RawFragment extends Fragment
         view.findViewById(R.id.picture).setOnClickListener(this);
         view.findViewById(R.id.info).setOnClickListener(this);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
+        permissions = new CameraPermissions(getActivity(), this);
 
         // Setup a new OrientationEventListener.  This is used to handle rotation events like a
         // 180 degree rotation that do not normally trigger a call to onCreate to do view re-layout
@@ -658,7 +642,7 @@ public class Camera2RawFragment extends Fragment
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if (requestCode == REQUEST_CAMERA_PERMISSIONS) {
+        if (requestCode == CameraPermissions.REQUEST_CAMERA_PERMISSIONS) {
             for (int result : grantResults) {
                 if (result != PackageManager.PERMISSION_GRANTED) {
                     showMissingPermissionError();
@@ -769,8 +753,8 @@ public class Camera2RawFragment extends Fragment
         if (!setUpCameraOutputs()) {
             return;
         }
-        if (!hasAllPermissionsGranted()) {
-            requestCameraPermissions();
+        if (!permissions.hasAllPermissionsGranted()) {
+            permissions.requestCameraPermissions();
             return;
         }
 
@@ -799,56 +783,6 @@ public class Camera2RawFragment extends Fragment
         }
     }
 
-    /**
-     * Requests permissions necessary to use camera and save pictures.
-     */
-    private void requestCameraPermissions() {
-        if (shouldShowRationale()) {
-            PermissionConfirmationDialog.newInstance().show(getChildFragmentManager(), "dialog");
-        } else {
-            FragmentCompat.requestPermissions(this, CAMERA_PERMISSIONS, REQUEST_CAMERA_PERMISSIONS);
-        }
-    }
-
-    /**
-     * Tells whether all the necessary permissions are granted to this app.
-     *
-     * @return True if all the required permissions are granted.
-     */
-    private boolean hasAllPermissionsGranted() {
-        for (String permission : CAMERA_PERMISSIONS) {
-            if (ActivityCompat.checkSelfPermission(getActivity(), permission)
-                    != PackageManager.PERMISSION_GRANTED) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Gets whether you should show UI with rationale for requesting the permissions.
-     *
-     * @return True if the UI should be shown.
-     */
-    private boolean shouldShowRationale() {
-        for (String permission : CAMERA_PERMISSIONS) {
-            if (FragmentCompat.shouldShowRequestPermissionRationale(this, permission)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Shows that this app really needs the permission and finishes the app.
-     */
-    private void showMissingPermissionError() {
-        Activity activity = getActivity();
-        if (activity != null) {
-            Toast.makeText(activity, R.string.request_permission, Toast.LENGTH_SHORT).show();
-            activity.finish();
-        }
-    }
 
     /**
      * Closes the current {@link CameraDevice}.
@@ -1315,194 +1249,6 @@ public class Camera2RawFragment extends Fragment
         }
     }
 
-    /**
-     * Runnable that saves an {@link Image} into the specified {@link File}, and updates
-     * {@link android.provider.MediaStore} to include the resulting file.
-     * <p/>
-     * This can be constructed through an {@link ImageSaverBuilder} as the necessary image and
-     * result information becomes available.
-     */
-    private static class ImageSaver implements Runnable {
-
-        /**
-         * The image to save.
-         */
-        private final Image mImage;
-        /**
-         * The file we save the image into.
-         */
-        private final File mFile;
-
-        /**
-         * The CaptureResult for this image capture.
-         */
-        private final CaptureResult mCaptureResult;
-
-        /**
-         * The CameraCharacteristics for this camera device.
-         */
-        private final CameraCharacteristics mCharacteristics;
-
-        /**
-         * The Context to use when updating MediaStore with the saved images.
-         */
-        private final Context mContext;
-
-        /**
-         * A reference counted wrapper for the ImageReader that owns the given image.
-         */
-        private final RefCountedAutoCloseable<ImageReader> mReader;
-
-        private ImageSaver(Image image, File file, CaptureResult result,
-                           CameraCharacteristics characteristics, Context context,
-                           RefCountedAutoCloseable<ImageReader> reader) {
-            mImage = image;
-            mFile = file;
-            mCaptureResult = result;
-            mCharacteristics = characteristics;
-            mContext = context;
-            mReader = reader;
-        }
-
-        @Override
-        public void run() {
-            boolean success = false;
-            int format = mImage.getFormat();
-            switch (format) {
-                case ImageFormat.JPEG: {
-                    ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-                    byte[] bytes = new byte[buffer.remaining()];
-                    buffer.get(bytes);
-                    FileOutputStream output = null;
-                    try {
-                        output = new FileOutputStream(mFile);
-                        output.write(bytes);
-                        success = true;
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    } finally {
-                        mImage.close();
-                        closeOutput(output);
-                    }
-                    break;
-                }
-                case ImageFormat.RAW_SENSOR: {
-                    DngCreator dngCreator = new DngCreator(mCharacteristics, mCaptureResult);
-                    FileOutputStream output = null;
-                    try {
-                        output = new FileOutputStream(mFile);
-                        dngCreator.writeImage(output, mImage);
-                        success = true;
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    } finally {
-                        mImage.close();
-                        closeOutput(output);
-                    }
-                    break;
-                }
-                default: {
-                    Log.e(TAG, "Cannot save image, unexpected image format:" + format);
-                    break;
-                }
-            }
-
-            // Decrement reference count to allow ImageReader to be closed to free up resources.
-            mReader.close();
-
-            // If saving the file succeeded, update MediaStore.
-            if (success) {
-                MediaScannerConnection.scanFile(mContext, new String[]{mFile.getPath()},
-                /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
-                    @Override
-                    public void onMediaScannerConnected() {
-                        // Do nothing
-                    }
-
-                    @Override
-                    public void onScanCompleted(String path, Uri uri) {
-                        Log.i(TAG, "Scanned " + path + ":");
-                        Log.i(TAG, "-> uri=" + uri);
-                    }
-                });
-            }
-        }
-
-        /**
-         * Builder class for constructing {@link ImageSaver}s.
-         * <p/>
-         * This class is thread safe.
-         */
-        public static class ImageSaverBuilder {
-            private Image mImage;
-            private File mFile;
-            private CaptureResult mCaptureResult;
-            private CameraCharacteristics mCharacteristics;
-            private Context mContext;
-            private RefCountedAutoCloseable<ImageReader> mReader;
-
-            /**
-             * Construct a new ImageSaverBuilder using the given {@link Context}.
-             *
-             * @param context a {@link Context} to for accessing the
-             *                {@link android.provider.MediaStore}.
-             */
-            public ImageSaverBuilder(final Context context) {
-                mContext = context;
-            }
-
-            public synchronized ImageSaverBuilder setRefCountedReader(
-                    RefCountedAutoCloseable<ImageReader> reader) {
-                if (reader == null) throw new NullPointerException();
-
-                mReader = reader;
-                return this;
-            }
-
-            public synchronized ImageSaverBuilder setImage(final Image image) {
-                if (image == null) throw new NullPointerException();
-                mImage = image;
-                return this;
-            }
-
-            public synchronized ImageSaverBuilder setFile(final File file) {
-                if (file == null) throw new NullPointerException();
-                mFile = file;
-                return this;
-            }
-
-            public synchronized ImageSaverBuilder setResult(final CaptureResult result) {
-                if (result == null) throw new NullPointerException();
-                mCaptureResult = result;
-                return this;
-            }
-
-            public synchronized ImageSaverBuilder setCharacteristics(
-                    final CameraCharacteristics characteristics) {
-                if (characteristics == null) throw new NullPointerException();
-                mCharacteristics = characteristics;
-                return this;
-            }
-
-            public synchronized ImageSaver buildIfComplete() {
-                if (!isComplete()) {
-                    return null;
-                }
-                return new ImageSaver(mImage, mFile, mCaptureResult, mCharacteristics, mContext,
-                        mReader);
-            }
-
-            public synchronized String getSaveLocation() {
-                return (mFile == null) ? "Unknown" : mFile.toString();
-            }
-
-            private boolean isComplete() {
-                return mImage != null && mFile != null && mCaptureResult != null
-                        && mCharacteristics != null;
-            }
-        }
-    }
-
     // Utility classes and methods:
     // *********************************************************************************************
 
@@ -1551,67 +1297,6 @@ public class Camera2RawFragment extends Fragment
                         }
                     })
                     .create();
-        }
-    }
-
-    /**
-     * A wrapper for an {@link AutoCloseable} object that implements reference counting to allow
-     * for resource management.
-     */
-    public static class RefCountedAutoCloseable<T extends AutoCloseable> implements AutoCloseable {
-        private T mObject;
-        private long mRefCount = 0;
-
-        /**
-         * Wrap the given object.
-         *
-         * @param object an object to wrap.
-         */
-        public RefCountedAutoCloseable(T object) {
-            if (object == null) throw new NullPointerException();
-            mObject = object;
-        }
-
-        /**
-         * Increment the reference count and return the wrapped object.
-         *
-         * @return the wrapped object, or null if the object has been released.
-         */
-        public synchronized T getAndRetain() {
-            if (mRefCount < 0) {
-                return null;
-            }
-            mRefCount++;
-            return mObject;
-        }
-
-        /**
-         * Return the wrapped object.
-         *
-         * @return the wrapped object, or null if the object has been released.
-         */
-        public synchronized T get() {
-            return mObject;
-        }
-
-        /**
-         * Decrement the reference count and release the wrapped object if there are no other
-         * users retaining this object.
-         */
-        @Override
-        public synchronized void close() {
-            if (mRefCount >= 0) {
-                mRefCount--;
-                if (mRefCount < 0) {
-                    try {
-                        mObject.close();
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    } finally {
-                        mObject = null;
-                    }
-                }
-            }
         }
     }
 
@@ -1671,21 +1356,6 @@ public class Camera2RawFragment extends Fragment
     private static String generateTimestamp() {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US);
         return sdf.format(new Date());
-    }
-
-    /**
-     * Cleanup the given {@link OutputStream}.
-     *
-     * @param outputStream the stream to close.
-     */
-    private static void closeOutput(OutputStream outputStream) {
-        if (null != outputStream) {
-            try {
-                outputStream.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
     }
 
     /**
@@ -1813,36 +1483,14 @@ public class Camera2RawFragment extends Fragment
     }
 
     /**
-     * A dialog that explains about the necessary permissions.
+     * Shows that this app really needs the permission and finishes the app.
      */
-    public static class PermissionConfirmationDialog extends DialogFragment {
-
-        public static PermissionConfirmationDialog newInstance() {
-            return new PermissionConfirmationDialog();
+    private void showMissingPermissionError() {
+        Activity activity = getActivity();
+        if (activity != null) {
+            Toast.makeText(activity, R.string.request_permission, Toast.LENGTH_SHORT).show();
+            activity.finish();
         }
-
-        @Override
-        public Dialog onCreateDialog(Bundle savedInstanceState) {
-            final Fragment parent = getParentFragment();
-            return new AlertDialog.Builder(getActivity())
-                    .setMessage(R.string.request_permission)
-                    .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
-                        @Override
-                        public void onClick(DialogInterface dialog, int which) {
-                            FragmentCompat.requestPermissions(parent, CAMERA_PERMISSIONS,
-                                    REQUEST_CAMERA_PERMISSIONS);
-                        }
-                    })
-                    .setNegativeButton(android.R.string.cancel,
-                            new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialog, int which) {
-                                    getActivity().finish();
-                                }
-                            })
-                    .create();
-        }
-
     }
 
 }

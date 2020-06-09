@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-package com.example.android.camera2raw;
+package com.nps.camera;
 
 import android.app.Activity;
 import android.os.Bundle;
+
+import com.nps.camera.R;
 
 /**
  * Activity displaying a fragment that implements RAW photo captures.
@@ -30,7 +32,7 @@ public class CameraActivity extends Activity {
         setContentView(R.layout.activity_camera);
         if (null == savedInstanceState) {
             getFragmentManager().beginTransaction()
-                    .replace(R.id.container, Camera2RawFragment.newInstance())
+                    .replace(R.id.container, Camera.newInstance())
                     .commit();
         }
     }
